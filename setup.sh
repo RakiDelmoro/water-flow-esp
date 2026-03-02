@@ -1,0 +1,1 @@
+cargo generate --git https://github.com/esp-rs/esp-idf-template.git cargo

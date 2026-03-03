@@ -1,6 +1,9 @@
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use esp_idf_svc::mqtt::client::{EspMqttClient, MqttClientConfiguration, QoS};
 use crate::platform::traits::{MqttManager, MqttPublisher};
+use esp_idf_svc::mqtt::client::{EspMqttClient, MqttClientConfiguration, QoS};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 pub struct Esp32MqttPublisher {
     client: EspMqttClient<'static>,
@@ -21,18 +24,17 @@ impl MqttManager for Esp32MqttManager {
     type Client = Esp32MqttPublisher;
 
     fn run_loop(
-        wifi_ready:  Arc<AtomicBool>,
-        mqtt_ready:  Arc<AtomicBool>,
+        wifi_ready: Arc<AtomicBool>,
+        mqtt_ready: Arc<AtomicBool>,
         client_slot: Arc<Mutex<Option<Self::Client>>>,
     ) -> anyhow::Result<()> {
-        std::iter::repeat(())
-            .try_for_each(|_| session_loop(&wifi_ready, &mqtt_ready, &client_slot))
+        std::iter::repeat(()).try_for_each(|_| session_loop(&wifi_ready, &mqtt_ready, &client_slot))
     }
 }
 
 fn session_loop(
-    wifi_ready:  &Arc<AtomicBool>,
-    mqtt_ready:  &Arc<AtomicBool>,
+    wifi_ready: &Arc<AtomicBool>,
+    mqtt_ready: &Arc<AtomicBool>,
     client_slot: &Arc<Mutex<Option<Esp32MqttPublisher>>>,
 ) -> anyhow::Result<()> {
     std::iter::repeat(())

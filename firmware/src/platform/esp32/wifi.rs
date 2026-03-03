@@ -1,11 +1,14 @@
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use crate::platform::traits::WifiManager;
 use esp_idf_hal::modem::Modem;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     nvs::EspDefaultNvsPartition,
     wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi},
 };
-use crate::platform::traits::WifiManager;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 pub struct Esp32WifiManager {
     wifi: BlockingWifi<EspWifi<'static>>,
@@ -14,7 +17,7 @@ pub struct Esp32WifiManager {
 impl WifiManager<Modem> for Esp32WifiManager {
     fn setup(modem: Modem) -> anyhow::Result<Self> {
         let sysloop = EspSystemEventLoop::take()?;
-        let nvs     = EspDefaultNvsPartition::take()?;
+        let nvs = EspDefaultNvsPartition::take()?;
         EspWifi::new(modem, sysloop.clone(), Some(nvs))
             .map_err(anyhow::Error::from)
             .and_then(|esp_wifi| BlockingWifi::wrap(esp_wifi, sysloop).map_err(anyhow::Error::from))
@@ -22,14 +25,14 @@ impl WifiManager<Modem> for Esp32WifiManager {
     }
 
     fn run_loop(mut self, connected: Arc<AtomicBool>) -> anyhow::Result<()> {
-        self.wifi.set_configuration(&Configuration::Client(ClientConfiguration {
-            ssid:     env!("WIFI_SSID").try_into().unwrap(),
-            password: env!("WIFI_PASS").try_into().unwrap(),
-            ..Default::default()
-        }))?;
+        self.wifi
+            .set_configuration(&Configuration::Client(ClientConfiguration {
+                ssid: env!("WIFI_SSID").try_into().unwrap(),
+                password: env!("WIFI_PASS").try_into().unwrap(),
+                ..Default::default()
+            }))?;
         self.wifi.start()?;
-        std::iter::repeat(())
-            .try_for_each(|_| connect_and_monitor(&mut self.wifi, &connected))
+        std::iter::repeat(()).try_for_each(|_| connect_and_monitor(&mut self.wifi, &connected))
     }
 
     fn is_connected(&self) -> bool {

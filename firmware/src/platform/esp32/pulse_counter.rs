@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicU32, Ordering};
-use esp_idf_hal::gpio::{AnyIOPin, Input, InterruptType, PinDriver, Pull};
 use crate::platform::traits::PulseCounter;
+use esp_idf_hal::gpio::{AnyIOPin, Input, InterruptType, PinDriver, Pull};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 static PULSE_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -34,6 +34,10 @@ impl PulseCounter for Esp32PulseCounter {
         self.pin.enable_interrupt().map_err(anyhow::Error::from)
     }
 
-    fn total_pulses(&self) -> u32 { PULSE_COUNT.load(Ordering::Relaxed) }
-    fn reset(&mut self)           { PULSE_COUNT.store(0, Ordering::Relaxed) }
+    fn total_pulses(&self) -> u32 {
+        PULSE_COUNT.load(Ordering::Relaxed)
+    }
+    fn reset(&mut self) {
+        PULSE_COUNT.store(0, Ordering::Relaxed)
+    }
 }

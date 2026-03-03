@@ -1,5 +1,8 @@
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use crate::platform::traits::ConnectionGuard;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 pub struct Esp32ConnectionGuard {
     wifi_ready: Arc<AtomicBool>,
@@ -8,7 +11,10 @@ pub struct Esp32ConnectionGuard {
 
 impl Esp32ConnectionGuard {
     pub fn new(wifi_ready: Arc<AtomicBool>, mqtt_ready: Arc<AtomicBool>) -> Self {
-        Self { wifi_ready, mqtt_ready }
+        Self {
+            wifi_ready,
+            mqtt_ready,
+        }
     }
 }
 

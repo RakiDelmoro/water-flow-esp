@@ -1,18 +1,18 @@
-use std::sync::{Arc, Mutex};
 use crate::platform::traits::PulseCounter;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct HostPulseCounter {
-    pulses:            Arc<Mutex<u32>>,
-    started:           Arc<Mutex<bool>>,
+    pulses: Arc<Mutex<u32>>,
+    started: Arc<Mutex<bool>>,
     interrupt_enabled: Arc<Mutex<bool>>,
 }
 
 impl HostPulseCounter {
     pub fn new() -> Self {
         Self {
-            pulses:            Arc::new(Mutex::new(0)),
-            started:           Arc::new(Mutex::new(false)),
+            pulses: Arc::new(Mutex::new(0)),
+            started: Arc::new(Mutex::new(false)),
             interrupt_enabled: Arc::new(Mutex::new(false)),
         }
     }
@@ -22,13 +22,17 @@ impl HostPulseCounter {
         *self.pulses.lock().unwrap() = next;
     }
 
-    pub fn is_started(&self) -> bool           { *self.started.lock().unwrap() }
-    pub fn is_interrupt_enabled(&self) -> bool { *self.interrupt_enabled.lock().unwrap() }
+    pub fn is_started(&self) -> bool {
+        *self.started.lock().unwrap()
+    }
+    pub fn is_interrupt_enabled(&self) -> bool {
+        *self.interrupt_enabled.lock().unwrap()
+    }
 }
 
 impl PulseCounter for HostPulseCounter {
     fn start(&mut self) -> anyhow::Result<()> {
-        *self.started.lock().unwrap()           = true;
+        *self.started.lock().unwrap() = true;
         *self.interrupt_enabled.lock().unwrap() = true;
         Ok(())
     }
@@ -38,8 +42,12 @@ impl PulseCounter for HostPulseCounter {
         Ok(())
     }
 
-    fn total_pulses(&self) -> u32 { *self.pulses.lock().unwrap() }
-    fn reset(&mut self)           { *self.pulses.lock().unwrap() = 0 }
+    fn total_pulses(&self) -> u32 {
+        *self.pulses.lock().unwrap()
+    }
+    fn reset(&mut self) {
+        *self.pulses.lock().unwrap() = 0
+    }
 }
 
 #[cfg(test)]

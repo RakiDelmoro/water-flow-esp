@@ -1,5 +1,8 @@
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use crate::platform::traits::ConnectionGuard;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 pub struct HostConnectionGuard {
     wifi_ready: Arc<AtomicBool>,
@@ -14,8 +17,12 @@ impl HostConnectionGuard {
         }
     }
 
-    pub fn set_wifi(&self, ready: bool) { self.wifi_ready.store(ready, Ordering::Relaxed) }
-    pub fn set_mqtt(&self, ready: bool) { self.mqtt_ready.store(ready, Ordering::Relaxed) }
+    pub fn set_wifi(&self, ready: bool) {
+        self.wifi_ready.store(ready, Ordering::Relaxed)
+    }
+    pub fn set_mqtt(&self, ready: bool) {
+        self.mqtt_ready.store(ready, Ordering::Relaxed)
+    }
 }
 
 impl ConnectionGuard for HostConnectionGuard {

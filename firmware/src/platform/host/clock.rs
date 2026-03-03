@@ -1,5 +1,5 @@
-use std::sync::{Arc, Mutex};
 use crate::platform::traits::Clock;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct HostClock(Arc<Mutex<u64>>);

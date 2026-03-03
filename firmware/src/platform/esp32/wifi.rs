@@ -12,23 +12,29 @@ use std::sync::{
 
 pub struct Esp32WifiManager {
     wifi: BlockingWifi<EspWifi<'static>>,
+    ssid: String,
+    password: String,
 }
 
 impl WifiManager<Modem> for Esp32WifiManager {
-    fn setup(modem: Modem) -> anyhow::Result<Self> {
+    fn setup(modem: Modem, ssid: &str, password: &str) -> anyhow::Result<Self> {
         let sysloop = EspSystemEventLoop::take()?;
         let nvs = EspDefaultNvsPartition::take()?;
         EspWifi::new(modem, sysloop.clone(), Some(nvs))
             .map_err(anyhow::Error::from)
             .and_then(|esp_wifi| BlockingWifi::wrap(esp_wifi, sysloop).map_err(anyhow::Error::from))
-            .map(|wifi| Self { wifi })
+            .map(|wifi| Self {
+                wifi,
+                ssid: ssid.to_string(),
+                password: password.to_string(),
+            })
     }
 
     fn run_loop(mut self, connected: Arc<AtomicBool>) -> anyhow::Result<()> {
         self.wifi
             .set_configuration(&Configuration::Client(ClientConfiguration {
-                ssid: env!("WIFI_SSID").try_into().unwrap(),
-                password: env!("WIFI_PASS").try_into().unwrap(),
+                ssid: self.ssid.as_bytes().try_into().unwrap(),
+                password: self.password.as_bytes().try_into().unwrap(),
                 ..Default::default()
             }))?;
         self.wifi.start()?;

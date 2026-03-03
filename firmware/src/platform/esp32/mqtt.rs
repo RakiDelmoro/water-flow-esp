@@ -24,15 +24,18 @@ impl MqttManager for Esp32MqttManager {
     type Client = Esp32MqttPublisher;
 
     fn run_loop(
+        config: &crate::config::Config,
         wifi_ready: Arc<AtomicBool>,
         mqtt_ready: Arc<AtomicBool>,
         client_slot: Arc<Mutex<Option<Self::Client>>>,
     ) -> anyhow::Result<()> {
-        std::iter::repeat(()).try_for_each(|_| session_loop(&wifi_ready, &mqtt_ready, &client_slot))
+        std::iter::repeat(())
+            .try_for_each(|_| session_loop(config, &wifi_ready, &mqtt_ready, &client_slot))
     }
 }
 
 fn session_loop(
+    config: &crate::config::Config,
     wifi_ready: &Arc<AtomicBool>,
     mqtt_ready: &Arc<AtomicBool>,
     client_slot: &Arc<Mutex<Option<Esp32MqttPublisher>>>,
@@ -42,11 +45,13 @@ fn session_loop(
         .for_each(|_| std::thread::sleep(std::time::Duration::from_millis(500)));
 
     let cfg = MqttClientConfiguration {
-        client_id: Some(env!("MQTT_CLIENT_ID")),
+        client_id: Some(&config.mqtt_client_id),
+        username: config.mqtt_username.as_deref(),
+        password: config.mqtt_password.as_deref(),
         ..Default::default()
     };
 
-    EspMqttClient::new(env!("MQTT_BROKER_URL"), &cfg)
+    EspMqttClient::new(&config.mqtt_broker_url, &cfg)
         .map_err(anyhow::Error::from)
         .map(|(client, connection)| {
             *client_slot.lock().unwrap() = Some(Esp32MqttPublisher { client });

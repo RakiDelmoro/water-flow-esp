@@ -15,7 +15,7 @@ impl HostWifiManager {
 }
 
 impl WifiManager<()> for HostWifiManager {
-    fn setup(_modem: ()) -> anyhow::Result<Self> {
+    fn setup(_modem: (), _ssid: &str, _password: &str) -> anyhow::Result<Self> {
         Ok(Self::new(true))
     }
 

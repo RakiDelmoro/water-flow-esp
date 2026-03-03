@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 pub struct MqttDataSink<P: MqttPublisher, B: PayloadBuilder> {
     client_slot: Arc<Mutex<Option<P>>>,
     builder: B,
-    topic: &'static str,
+    topic: String,
 }
 
 impl<P: MqttPublisher, B: PayloadBuilder> MqttDataSink<P, B> {
-    pub fn new(client_slot: Arc<Mutex<Option<P>>>, builder: B, topic: &'static str) -> Self {
+    pub fn new(client_slot: Arc<Mutex<Option<P>>>, builder: B, topic: String) -> Self {
         Self {
             client_slot,
             builder,

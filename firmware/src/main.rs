@@ -38,10 +38,13 @@ use log::info;
 use firmware::platform::traits::*;
 
 #[cfg(target_os = "espidf")]
-use firmware::{platform::esp32::*, run};
+use firmware::{config::Config, platform::esp32::*, run};
 
 #[cfg(target_os = "espidf")]
 fn main() -> Result<()> {
+    // Load configuration from environment
+    let config = Config::from_env()?;
+
     // Initialize logger
     Logger::init_default()?;
 
@@ -50,7 +53,7 @@ fn main() -> Result<()> {
     // Take ownership of hardware peripherals
     let modem = Modem::take()?;
     let pins = Pins::new();
-    let flow_pin = pins.gpio4.into_any_io();
+    let flow_pin = take_pin(pins, config.flow_sensor_pin)?;
 
     // Shared state for WiFi/MQTT readiness and MQTT client
     let wifi_ready = Arc::new(AtomicBool::new(false));
@@ -59,7 +62,7 @@ fn main() -> Result<()> {
 
     // Spawn WiFi manager thread
     let wifi_ready_clone = Arc::clone(&wifi_ready);
-    let wifi_manager = Esp32WifiManager::setup(modem)?;
+    let wifi_manager = Esp32WifiManager::setup(modem, &config.wifi_ssid, &config.wifi_pass)?;
     std::thread::spawn(move || {
         if let Err(e) = wifi_manager.run_loop(wifi_ready_clone) {
             log::error!("WiFi task failed: {e}");
@@ -71,9 +74,12 @@ fn main() -> Result<()> {
     let mqtt_ready_clone = Arc::clone(&mqtt_ready);
     let client_slot_clone = Arc::clone(&client_slot);
     std::thread::spawn(move || {
-        if let Err(e) =
-            Esp32MqttManager::run_loop(wifi_ready_clone, mqtt_ready_clone, client_slot_clone)
-        {
+        if let Err(e) = Esp32MqttManager::run_loop(
+            &config,
+            wifi_ready_clone,
+            mqtt_ready_clone,
+            client_slot_clone,
+        ) {
             log::error!("MQTT task failed: {e}");
         }
     });
@@ -82,13 +88,9 @@ fn main() -> Result<()> {
     let pulse_counter = Esp32PulseCounter::new(flow_pin)?;
     let clock = Esp32Clock;
     let payload_builder = JsonPayloadBuilder {
-        device_id: option_env!("DEVICE_ID").unwrap_or("esp32-flow"),
+        device_id: config.device_id,
     };
-    let sink = MqttDataSink::new(
-        client_slot,
-        payload_builder,
-        option_env!("MQTT_TOPIC").unwrap_or("water/flow"),
-    );
+    let sink = MqttDataSink::new(client_slot, payload_builder, config.mqtt_topic);
     let guard = Esp32ConnectionGuard::new(wifi_ready, mqtt_ready);
     let delay = Esp32Delay;
 

@@ -95,12 +95,12 @@ mod tests {
 ## Hardware Setup
 
 ### Connections
-- **Flow Sensor**: Connect to GPIO4 (hard-coded in `main.rs`)
+- **Flow Sensor**: Connect to GPIO pin specified by `FLOW_SENSOR_PIN` (default: GPIO4)
 - **Power**: 3.3V or 5V depending on sensor (use appropriate level shifting)
 
 ### Configuration
 
-Set the following environment variables at build/run time:
+Configuration is provided via environment variables. A template is available in `.env.example`.
 
 **Required:**
 - `WIFI_SSID` - WiFi network name
@@ -111,6 +111,9 @@ Set the following environment variables at build/run time:
 **Optional (with defaults):**
 - `MQTT_TOPIC` - MQTT topic to publish to (default: `water/flow`)
 - `DEVICE_ID` - Device identifier in payload (default: `esp32-flow`)
+- `FLOW_SENSOR_PIN` - GPIO pin number for flow sensor (default: `4`)
+- `MQTT_USERNAME` - MQTT username (if broker requires authentication)
+- `MQTT_PASSWORD` - MQTT password (if broker requires authentication)
 
 Example build with cargo:
 
@@ -119,6 +122,19 @@ WIFI_SSID="my-network" \
 WIFI_PASS="my-password" \
 MQTT_BROKER_URL="mqtt://broker.local:1883" \
 MQTT_CLIENT_ID="esp32-001" \
+cargo build --release --target xtensa-esp32-espidf
+```
+
+You can also set optional variables:
+
+```bash
+WIFI_SSID="my-network" \
+WIFI_PASS="my-password" \
+MQTT_BROKER_URL="mqtt://broker.local:1883" \
+MQTT_CLIENT_ID="esp32-001" \
+MQTT_TOPIC="water/flow/custom" \
+DEVICE_ID="sensor-01" \
+FLOW_SENSOR_PIN=5 \
 cargo build --release --target xtensa-esp32-espidf
 ```
 

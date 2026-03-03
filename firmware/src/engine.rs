@@ -59,7 +59,9 @@ where
     pub fn start(&mut self) -> Result<()> {
         loop {
             // Always re-arm interrupt for next edge capture
-            self.pulse_counter.enable_interrupt().context("Failed to enable interrupt")?;
+            self.pulse_counter
+                .enable_interrupt()
+                .context("Failed to enable interrupt")?;
 
             let now = self.clock.time_now_in_millis();
             let elapsed = self.clock.elapsed_ms(self.last_sample_time);

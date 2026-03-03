@@ -65,6 +65,7 @@ impl MqttManager for HostMqttManager {
     type Client = HostMqttPublisher;
 
     fn run_loop(
+        _config: &crate::config::Config,
         wifi_ready: Arc<AtomicBool>,
         mqtt_ready: Arc<AtomicBool>,
         client_slot: Arc<Mutex<Option<Self::Client>>>,
@@ -82,6 +83,7 @@ impl MqttManager for HostMqttManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
     #[test]
     fn publisher_fail_next_recovers_on_next_call() {
@@ -99,7 +101,7 @@ mod tests {
         let wifi = Arc::new(AtomicBool::new(true));
         let mqtt = Arc::new(AtomicBool::new(false));
         let slot: Arc<Mutex<Option<HostMqttPublisher>>> = Arc::new(Mutex::new(None));
-        HostMqttManager::run_loop(wifi, mqtt.clone(), slot.clone()).unwrap();
+        HostMqttManager::run_loop(&Config::default(), wifi, mqtt.clone(), slot.clone()).unwrap();
         assert!(mqtt.load(Ordering::Relaxed));
         assert!(slot.lock().unwrap().is_some());
     }
@@ -109,7 +111,7 @@ mod tests {
         let wifi = Arc::new(AtomicBool::new(false));
         let mqtt = Arc::new(AtomicBool::new(false));
         let slot: Arc<Mutex<Option<HostMqttPublisher>>> = Arc::new(Mutex::new(None));
-        HostMqttManager::run_loop(wifi, mqtt.clone(), slot).unwrap();
+        HostMqttManager::run_loop(&Config::default(), wifi, mqtt.clone(), slot).unwrap();
         assert!(!mqtt.load(Ordering::Relaxed));
     }
 }

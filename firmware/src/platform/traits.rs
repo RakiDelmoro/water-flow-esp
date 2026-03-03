@@ -27,8 +27,9 @@ pub trait PulseCounter {
 
 pub trait WifiManager<M> {
     /// Perform one-time hardware initialisation and return a handle.
-    fn setup(modem: M) -> anyhow::Result<Self>
-    where Self: Sized;
+    fn setup(modem: M, ssid: &str, password: &str) -> anyhow::Result<Self>
+    where
+        Self: Sized;
 
     /// Blocking loop: connect, monitor, reconnect on drop.
     /// Writes `true` into `connected` when the link is up.
@@ -44,7 +45,12 @@ pub trait MqttManager {
     /// Blocking loop: wait for WiFi, connect to broker, maintain session.
     /// Populates `client_slot` once a session is established;
     /// clears it on disconnect.
-    fn run_loop(wifi_ready: Arc<std::sync::atomic::AtomicBool>, mqtt_ready: Arc<std::sync::atomic::AtomicBool>, client_slot: Arc<Mutex<Option<Self::Client>>>) -> anyhow::Result<()>;
+    fn run_loop(
+        config: &crate::config::Config,
+        wifi_ready: Arc<std::sync::atomic::AtomicBool>,
+        mqtt_ready: Arc<std::sync::atomic::AtomicBool>,
+        client_slot: Arc<Mutex<Option<Self::Client>>>,
+    ) -> anyhow::Result<()>;
 }
 
 pub trait MqttPublisher {
@@ -54,14 +60,18 @@ pub trait MqttPublisher {
 }
 
 pub trait PayloadBuilder {
-    fn build(&self, pulse_delta: u32, time_delta_ms: u64, accumulative_pulse: u32) -> anyhow::Result<Vec<u8>>;
+    fn build(
+        &self,
+        pulse_delta: u32,
+        time_delta_ms: u64,
+        accumulative_pulse: u32,
+    ) -> anyhow::Result<Vec<u8>>;
 }
-
 
 pub struct PayloadSample {
     pub pulse_delta: u32,
     pub time_delta_ms: u64,
-    pub accumulative_pulse: u32
+    pub accumulative_pulse: u32,
 }
 
 pub trait PayloadSampler {

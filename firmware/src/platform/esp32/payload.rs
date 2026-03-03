@@ -1,7 +1,7 @@
 use crate::platform::traits::PayloadBuilder;
 
 pub struct JsonPayloadBuilder {
-    pub device_id: &'static str,
+    pub device_id: String,
 }
 
 impl PayloadBuilder for JsonPayloadBuilder {

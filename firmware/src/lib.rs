@@ -5,11 +5,12 @@
 //! - `platform`: Platform abstractions (traits) and implementations
 //! - `run()`: Top-level function to start the monitoring system
 
+pub mod config;
 pub mod engine;
 pub mod platform;
 
 use crate::engine::FlowMonitor;
-use crate::platform::traits::{PulseCounter, Clock, DataSink, ConnectionGuard, Delay};
+use crate::platform::traits::{Clock, ConnectionGuard, DataSink, Delay, PulseCounter};
 
 /// Start the flow monitoring system.
 ///

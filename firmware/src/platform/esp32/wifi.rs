@@ -1,10 +1,13 @@
 use crate::platform::traits::WifiManager;
+use anyhow::anyhow;
+use core::convert::TryFrom;
 use esp_idf_hal::modem::Modem;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     nvs::EspDefaultNvsPartition,
     wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi},
 };
+use heapless::String as HeaplessString;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -30,15 +33,28 @@ impl WifiManager<Modem> for Esp32WifiManager {
             })
     }
 
-    fn run_loop(mut self, connected: Arc<AtomicBool>) -> anyhow::Result<()> {
+    fn run_loop(
+        mut self,
+        connected: Arc<AtomicBool>,
+        shutdown: Option<Arc<AtomicBool>>,
+    ) -> anyhow::Result<()> {
         self.wifi
             .set_configuration(&Configuration::Client(ClientConfiguration {
-                ssid: self.ssid.as_bytes().try_into().unwrap(),
-                password: self.password.as_bytes().try_into().unwrap(),
+                ssid: HeaplessString::<32>::try_from(self.ssid.as_str())
+                    .map_err(|_| anyhow!("SSID too long or invalid"))?,
+                password: HeaplessString::<64>::try_from(self.password.as_str())
+                    .map_err(|_| anyhow!("Password too long or invalid"))?,
                 ..Default::default()
             }))?;
         self.wifi.start()?;
-        std::iter::repeat(()).try_for_each(|_| connect_and_monitor(&mut self.wifi, &connected))
+        loop {
+            if let Some(s) = &shutdown {
+                if s.load(Ordering::Relaxed) {
+                    break Ok(());
+                }
+            }
+            connect_and_monitor(&mut self.wifi, &connected)?;
+        }
     }
 
     fn is_connected(&self) -> bool {

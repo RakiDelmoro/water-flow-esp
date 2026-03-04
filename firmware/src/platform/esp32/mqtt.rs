@@ -28,9 +28,16 @@ impl MqttManager for Esp32MqttManager {
         wifi_ready: Arc<AtomicBool>,
         mqtt_ready: Arc<AtomicBool>,
         client_slot: Arc<Mutex<Option<Self::Client>>>,
+        shutdown: Option<Arc<AtomicBool>>,
     ) -> anyhow::Result<()> {
-        std::iter::repeat(())
-            .try_for_each(|_| session_loop(config, &wifi_ready, &mqtt_ready, &client_slot))
+        loop {
+            if let Some(s) = &shutdown {
+                if s.load(Ordering::Relaxed) {
+                    break Ok(());
+                }
+            }
+            session_loop(config, &wifi_ready, &mqtt_ready, &client_slot)?;
+        }
     }
 }
 
@@ -60,8 +67,9 @@ fn session_loop(
             connection
         })
         .map(|mut conn| {
-            std::iter::from_fn(|| conn.next().ok())
-                .for_each(|event| log::debug!("MQTT event: {:?}", event.payload()));
+            while let Some(event) = conn.next().ok() {
+                log::debug!("MQTT event: {:?}", event.payload());
+            }
         })
         .unwrap_or_else(|e| log::error!("MQTT error: {e}, retrying..."));
 

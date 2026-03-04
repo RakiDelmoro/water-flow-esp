@@ -30,7 +30,7 @@ fn compute_delta(last: u32, current: u32, accumulative: u32) -> (u32, u32) {
 }
 
 impl<C: Clock, P: PulseCounter> PayloadSampler for HardwarePayloadSampler<C, P> {
-    fn poll(&mut self) -> Option<FlowSample> {
+    fn poll(&mut self) -> Option<PayloadSample> {
         let now = self.clock.time_now_in_millis();
         let elapsed = now.saturating_sub(self.last_ms);
 

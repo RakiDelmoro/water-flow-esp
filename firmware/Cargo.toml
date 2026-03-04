@@ -1,0 +1,27 @@
+[package]
+name = "firmware"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+
+[dependencies]
+log = "0.4"
+serde_json = "1.0.149"
+anyhow = "1.0.101"
+heapless = "0.8"
+
+[target.'cfg(target_os = "espidf")'.dependencies]
+esp-idf-svc = "0.51"
+esp-idf-hal = "0.45.2"
+
+[dev-dependencies]
+mockall = "0.12"
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
+
+[profile.dev]
+debug = true
+opt-level = "z"
+panic = "abort"

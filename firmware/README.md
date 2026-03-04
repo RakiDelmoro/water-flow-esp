@@ -18,35 +18,30 @@ firmware/
 ├── Cargo.toml              (single package)
 ├── src/
 │   ├── lib.rs             (orchestrator, module declarations)
-│   ├── main.rs            (entry point)
-│   ├── config.rs          (WiFi/MQTT constants)
-│   ├── traits.rs          (trait abstractions)
-│   ├── flow_monitor.rs    (core monitoring logic)
-│   ├── wifi.rs            (WiFi adapter + step_wifi)
-│   ├── mqtt.rs            (MQTT publisher + step_mqtt)
-│   ├── sensor.rs          (FlowCounter + ISR setup)
-│   └── time.rs            (TimeSource + Delay)
+│   ├── main.rs            (ESP32 entry point)
+│   ├── engine.rs          (core monitoring loop)
+│   └── platform/          (platform abstractions & implementations)
+│       ├── traits.rs      (trait abstractions)
+│       ├── esp32/         (ESP32-specific implementations)
+│       └── host/          (host mocks for testing)
 ```
 
 ### Key Modules
 
 | Module | Responsibility |
 |--------|----------------|
-| **config** | Configuration constants (WiFi, MQTT, pins) |
-| **traits** | Abstractions: `TimeSource`, `FlowCounter`, `WifiAdapter`, `MqttPublisher`, `Delay` |
-| **flow_monitor** | Core monitoring loop, JSON building, tick processing |
-| **wifi** | WiFi connection management, `step_wifi()` for testable logic |
-| **mqtt** | MQTT client lifecycle, `step_mqtt()` for testable logic |
-| **sensor** | GPIO interrupt setup, pulse counting via `EspFlowCounter` |
-| **time** | ESP timer and FreeRTOS delay wrappers |
-| **lib** | Module declarations and `run()` orchestrator |
-| **main** | Minimal entry point calling `firmware::run()` |
+| **engine** | `FlowMonitor` - main monitoring loop with timing, interrupt handling, and conditional publishing |
+| **platform::traits** | Abstractions: `PulseCounter`, `Clock`, `DataSink`, `ConnectionGuard`, `Delay` |
+| **platform::esp32** | Concrete ESP32 implementations: `Esp32PulseCounter`, `Esp32Clock`, `MqttDataSink`, `Esp32ConnectionGuard`, `Esp32Delay`, `JsonPayloadBuilder`, `HardwarePayloadSampler`, `Esp32WifiManager`, `Esp32MqttManager` |
+| **platform::host** | Mock implementations for host-based unit testing |
+| **lib** | Exposes modules; provides `run()` orchestrator |
+| **main** | Wires concrete ESP32 components and starts the system |
 
 ## Testing Strategy
 
 ### Unit Tests (Inside Each Module)
 
-All tests are **unit tests** co-located with the code they test. They run on the host without requiring ESP32 hardware.
+All tests are **unit tests** co-located with the code they test. They run on the host without requiring ESP32 hardware, using mock implementations from `platform/host/`.
 
 ```bash
 # Run all unit tests (host)
@@ -61,20 +56,22 @@ cargo test --no-run
 
 ### Test Approach
 
-- **Mocking**: Uses `mockall` to mock ESP-IDF dependencies
-- **Testable design**: Infinite loops refactored into `step_*` functions for deterministic testing
-- **Pure functions**: Core logic (e.g., `build_payload`, `EspFlowCounter::swap`) tested directly
-- **Integration avoided**: Focus on fast, isolated unit tests; no integration tests in `tests/` directory
+- **Host mocks**: The `platform/host/` module provides mock implementations of all traits (`HostPulseCounter`, `HostDataSink`, `HostConnectionGuard`, `HostClock`, `HostDelay`, etc.)
+- **Deterministic testing**: The `HostClock` can be advanced manually; `HostPulseCounter` allows injecting pulse counts
+- **Pure logic**: Core logic in `engine.rs` and `platform/host/` is pure Rust with no ESP-IDF dependencies
+- **No hardware required**: All tests run on the host machine
 
 ### Test Coverage
 
 | Module | Coverage |
 |--------|----------|
-| `flow_monitor.rs` | `build_payload()` serialization, `process_tick()` with various states |
-| `wifi.rs` | `step_wifi()`: connection flag updates, reconnection, error handling |
-| `mqtt.rs` | `step_mqtt_manager()`: WiFi dependency, state clearing |
-| `sensor.rs` | `EspFlowCounter::swap()`: atomic operations, reset behavior |
-| `time.rs` | Platform-specific wrappers (ESP-only) |
+| `platform::host::clock` | Deterministic time advancement and elapsed calculation |
+| `platform::host::pulse_counter` | Pulse accumulation, reset, and thread-safe operations |
+| `platform::host::connection` | WiFi/MQTT ready flag combination logic |
+| `platform::host::mqtt` | MQTT manager behavior (waits for WiFi, slot population/clearing) |
+| `platform::host::payload` | JSON payload format verification |
+| `platform::host::sampler` | FIFO draining of samples |
+| `platform::host::sink` | Send recording and failure injection/recovery |
 
 ### Example Test
 
@@ -82,26 +79,15 @@ cargo test --no-run
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockall::mock;
-
-    mock! {
-        TestWifi {}
-        impl WifiAdapter for TestWifi {
-            fn is_connected(&self) -> Result<bool>;
-            fn connect(&mut self) -> Result<()>;
-        }
-    }
 
     #[test]
-    fn test_step_wifi_sets_connected_flag_when_connected() {
-        let mut wifi = MockTestWifi::new();
-        let connected_flag = Arc::new(AtomicBool::new(false));
+    fn test_publish_sequence() {
+        let mut sink = HostDataSink::new();
+        let sample = PayloadSample { pulse_delta: 5, time_delta_ms: 1000, accumulative_pulse: 10 };
 
-        wifi.expect_is_connected().returning(|| Ok(true));
-
-        step_wifi(&mut wifi, &connected_flag).unwrap();
-
-        assert!(connected_flag.load(Ordering::Relaxed));
+        sink.send(&sample).unwrap();
+        assert_eq!(sink.sent_count(), 1);
+        assert_eq!(sink.total_pulses_sent(), 5);
     }
 }
 ```
@@ -109,25 +95,47 @@ mod tests {
 ## Hardware Setup
 
 ### Connections
-- **Flow Sensor**: Connect to GPIO pin specified in `config.rs` (default: GPIO4)
+- **Flow Sensor**: Connect to GPIO pin specified by `FLOW_SENSOR_PIN` (default: GPIO4)
 - **Power**: 3.3V or 5V depending on sensor (use appropriate level shifting)
 
 ### Configuration
-Edit `src/config.rs` before building:
 
-```rust
-// WiFi credentials
-pub const WIFI_SSID: &str = "your-ssid";
-pub const WIFI_PASSWORD: &str = "your-password";
+Configuration is provided via environment variables. A template is available in `.env.example`.
 
-// MQTT broker
-pub const MQTT_URL: &str = "mqtt://broker.example.com:1883";
-pub const MQTT_USERNAME: &str = "username";
-pub const MQTT_PASSWORD: &str = "password";
-pub const MQTT_TOPIC: &str = "water/flow";
+**Required:**
+- `WIFI_SSID` - WiFi network name
+- `WIFI_PASS` - WiFi password
+- `MQTT_BROKER_URL` - MQTT broker URL (e.g., `mqtt://broker.example.com:1883`)
+- `MQTT_CLIENT_ID` - Unique client ID for MQTT connection
 
-// Flow sensor GPIO pin
-pub const FLOW_SENSOR_PIN: u8 = 4;
+**Optional (with defaults):**
+- `MQTT_TOPIC` - MQTT topic to publish to (default: `water/flow`)
+- `DEVICE_ID` - Device identifier in payload (default: `esp32-flow`)
+- `FLOW_SENSOR_PIN` - GPIO pin number for flow sensor (default: `4`)
+- `MQTT_USERNAME` - MQTT username (if broker requires authentication)
+- `MQTT_PASSWORD` - MQTT password (if broker requires authentication)
+
+Example build with cargo:
+
+```bash
+WIFI_SSID="my-network" \
+WIFI_PASS="my-password" \
+MQTT_BROKER_URL="mqtt://broker.local:1883" \
+MQTT_CLIENT_ID="esp32-001" \
+cargo build --release --target xtensa-esp32-espidf
+```
+
+You can also set optional variables:
+
+```bash
+WIFI_SSID="my-network" \
+WIFI_PASS="my-password" \
+MQTT_BROKER_URL="mqtt://broker.local:1883" \
+MQTT_CLIENT_ID="esp32-001" \
+MQTT_TOPIC="water/flow/custom" \
+DEVICE_ID="sensor-01" \
+FLOW_SENSOR_PIN=5 \
+cargo build --release --target xtensa-esp32-espidf
 ```
 
 ## Building & Flashing
@@ -172,9 +180,10 @@ cargo run --release --target xtensa-esp32-espidf -- --monitor
 - [ ] Add configuration validation tests
 - [ ] Implement graceful shutdown on signal
 - [ ] Add OTA update capability
-- [ ] Support multiple flow sensors
+- [ ] Support multiple flow sensors (or configurable GPIO pin)
 - [ ] Add metrics and health checks
-- [ ] Expansion of unit test coverage for edge cases
+- [ ] Add unit tests for `engine::FlowMonitor` with host mocks
+- [ ] Expand edge case coverage in existing tests
 
 ## License
 

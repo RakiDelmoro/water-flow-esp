@@ -1,101 +1,80 @@
-//! Entry point for ESP32 firmware.
-//!
-//! Wires together all concrete platform components and starts the monitoring loop.
-//!
-//! Build with required environment variables:
-//! - WIFI_SSID, WIFI_PASS
-//! - MQTT_BROKER_URL, MQTT_CLIENT_ID
-//! - MQTT_TOPIC (optional, defaults to "water/flow")
-//! - DEVICE_ID (optional, defaults to "esp32-flow")
+//! Firmware entry point.
 
 #![allow(unused_imports)]
 
-// For non-ESP32 targets, provide a dummy main that informs the user.
-#[cfg(not(target_os = "espidf"))]
-fn main() {
-    eprintln!("This firmware binary only runs on ESP32 with the espidf OS.");
-    eprintln!("Use `cargo test` for host testing of the library.");
-    std::process::exit(1);
-}
-
-// For ESP32 targets, the real main function and its imports.
-#[cfg(target_os = "espidf")]
-use std::sync::{atomic::AtomicBool, Arc, Mutex};
-
-#[cfg(target_os = "espidf")]
 use anyhow::Result;
 
 #[cfg(target_os = "espidf")]
-use esp_idf_hal::{gpio::Pins, modem::Modem};
+use firmware::production_runner;
+#[cfg(not(target_os = "espidf"))]
+use firmware::{mock_runner, Event, EventKind};
 
-#[cfg(target_os = "espidf")]
-use esp_idf_svc::log::Logger;
-
-#[cfg(target_os = "espidf")]
-use log::info;
-
-#[cfg(target_os = "espidf")]
-use firmware::platform::traits::*;
-
-#[cfg(target_os = "espidf")]
-use firmware::{config::Config, platform::esp32::*, run};
-
-#[cfg(target_os = "espidf")]
 fn main() -> Result<()> {
-    // Load configuration from environment
-    let config = Config::from_env()?;
+    #[cfg(target_os = "espidf")]
+    {
+        production_runner()
+    }
+    #[cfg(not(target_os = "espidf"))]
+    {
+        let events = mock_runner()?;
 
-    // Initialize logger
-    Logger::init_default()?;
-
-    info!("Starting water flow monitor...");
-
-    // Take ownership of hardware peripherals
-    let modem = Modem::take()?;
-    let pins = Pins::new();
-    let flow_pin = take_pin(pins, config.flow_sensor_pin)?;
-
-    // Shared state for WiFi/MQTT readiness and MQTT client
-    let wifi_ready = Arc::new(AtomicBool::new(false));
-    let mqtt_ready = Arc::new(AtomicBool::new(false));
-    let client_slot = Arc::new(Mutex::new(None));
-
-    // Spawn WiFi manager thread
-    let wifi_ready_clone = Arc::clone(&wifi_ready);
-    let wifi_manager = Esp32WifiManager::setup(modem, &config.wifi_ssid, &config.wifi_pass)?;
-    std::thread::spawn(move || {
-        if let Err(e) = wifi_manager.run_loop(wifi_ready_clone) {
-            log::error!("WiFi task failed: {e}");
+        // Print timeline
+        println!("=== Event Timeline ===");
+        for ev in &events {
+            let t_s = ev.time_ms / 1000;
+            let message = match &ev.kind {
+                EventKind::SimulationStarted => "Simulation started".to_string(),
+                EventKind::SimulationEnded => "Simulation ended".to_string(),
+                EventKind::WifiUp => "WiFi connected".to_string(),
+                EventKind::WifiDown => "WiFi disconnected!".to_string(),
+                EventKind::MqttUp => "MQTT connected".to_string(),
+                EventKind::MqttDown => "MQTT disconnected".to_string(),
+                EventKind::SystemReady => "System ready (WiFi+MQTT)".to_string(),
+                EventKind::SystemNotReady => "System not ready".to_string(),
+                EventKind::SensorSample { pulses } => {
+                    format!("Sensor sample taken ({} pulses)", pulses)
+                }
+                EventKind::PublishSuccess {
+                    pulse_delta,
+                    time_delta_ms,
+                } => format!(
+                    "Published sample ({} pulses, {} ms)",
+                    pulse_delta, time_delta_ms
+                ),
+                EventKind::PublishFailure { reason } => {
+                    format!("Publish failed: {}", reason)
+                }
+            };
+            println!("[{:>4}s] {}", t_s, message);
         }
-    });
 
-    // Spawn MQTT manager thread
-    let wifi_ready_clone = Arc::clone(&wifi_ready);
-    let mqtt_ready_clone = Arc::clone(&mqtt_ready);
-    let client_slot_clone = Arc::clone(&client_slot);
-    std::thread::spawn(move || {
-        if let Err(e) = Esp32MqttManager::run_loop(
-            &config,
-            wifi_ready_clone,
-            mqtt_ready_clone,
-            client_slot_clone,
-        ) {
-            log::error!("MQTT task failed: {e}");
-        }
-    });
+        // Summary
+        let total_events = events.len();
+        let publishes = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::PublishSuccess { .. }))
+            .count();
+        let sensor_samples = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::SensorSample { .. }))
+            .count();
+        let wifi_changes = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::WifiUp | EventKind::WifiDown))
+            .count();
+        let mqtt_changes = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::MqttUp | EventKind::MqttDown))
+            .count();
+        let failures = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::PublishFailure { .. }))
+            .count();
+        println!(
+            "Summary: {} total events ({} sensor samples, {} publishes, {} WiFi changes, {} MQTT changes, {} failures)",
+            total_events, sensor_samples, publishes, wifi_changes, mqtt_changes, failures
+        );
 
-    // Assemble components for FlowMonitor
-    let pulse_counter = Esp32PulseCounter::new(flow_pin)?;
-    let clock = Esp32Clock;
-    let payload_builder = JsonPayloadBuilder {
-        device_id: config.device_id,
-    };
-    let sink = MqttDataSink::new(client_slot, payload_builder, config.mqtt_topic);
-    let guard = Esp32ConnectionGuard::new(wifi_ready, mqtt_ready);
-    let delay = Esp32Delay;
-
-    info!("System initialized, starting monitor...");
-
-    // Run the main monitoring loop (never returns)
-    run(pulse_counter, clock, sink, guard, delay)
+        Ok(())
+    }
 }

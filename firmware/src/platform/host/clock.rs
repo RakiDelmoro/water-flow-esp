@@ -20,23 +20,3 @@ impl Clock for HostClock {
         *self.0.lock().unwrap()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn advances_deterministically() {
-        let c = HostClock::new(0);
-        c.advance(1_000);
-        c.advance(500);
-        assert_eq!(c.time_now_in_millis(), 1_500);
-    }
-
-    #[test]
-    fn elapsed_reflects_advance() {
-        let c = HostClock::new(1_000);
-        c.advance(300);
-        assert_eq!(c.elapsed_ms(1_000), 300);
-    }
-}

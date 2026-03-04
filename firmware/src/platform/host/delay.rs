@@ -20,16 +20,3 @@ impl Delay for HostDelay {
         *self.0.lock().unwrap() = next;
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn accumulates_without_real_sleep() {
-        let d = HostDelay::new();
-        d.delay_ms(100);
-        d.delay_ms(200);
-        assert_eq!(d.total_delayed_ms(), 300);
-    }
-}

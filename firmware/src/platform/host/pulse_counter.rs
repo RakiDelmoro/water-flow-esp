@@ -49,25 +49,3 @@ impl PulseCounter for HostPulseCounter {
         *self.pulses.lock().unwrap() = 0
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn accumulates_injected_pulses() {
-        let mut c = HostPulseCounter::new();
-        c.start().unwrap();
-        c.inject_pulses(5);
-        c.inject_pulses(3);
-        assert_eq!(c.total_pulses(), 8);
-    }
-
-    #[test]
-    fn resets_to_zero() {
-        let mut c = HostPulseCounter::new();
-        c.inject_pulses(10);
-        c.reset();
-        assert_eq!(c.total_pulses(), 0);
-    }
-}

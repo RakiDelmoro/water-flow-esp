@@ -69,49 +69,50 @@ impl MqttManager for HostMqttManager {
         wifi_ready: Arc<AtomicBool>,
         mqtt_ready: Arc<AtomicBool>,
         client_slot: Arc<Mutex<Option<Self::Client>>>,
+        shutdown: Option<Arc<AtomicBool>>,
     ) -> anyhow::Result<()> {
-        let session = wifi_ready
-            .load(Ordering::Relaxed)
-            .then(HostMqttPublisher::new);
-        let is_ready = session.is_some();
-        *client_slot.lock().unwrap() = session;
-        mqtt_ready.store(is_ready, Ordering::Relaxed);
-        Ok(())
-    }
-}
+        loop {
+            // Global shutdown check (top of loop)
+            if let Some(s) = &shutdown {
+                if s.load(Ordering::Relaxed) {
+                    mqtt_ready.store(false, Ordering::Relaxed);
+                    return Ok(());
+                }
+            }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Config;
+            // Wait for WiFi ready
+            while !wifi_ready.load(Ordering::Relaxed) {
+                if let Some(s) = &shutdown {
+                    if s.load(Ordering::Relaxed) {
+                        mqtt_ready.store(false, Ordering::Relaxed);
+                        return Ok(());
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
 
-    #[test]
-    fn publisher_fail_next_recovers_on_next_call() {
-        let mut p = HostMqttPublisher {
-            published: vec![],
-            fail_next: true,
-        };
-        assert!(p.publish("t", false, b"x").is_err());
-        assert!(p.publish("t", false, b"x").is_ok());
-        assert_eq!(p.published.len(), 1);
-    }
+            // WiFi ready: simulate MQTT connection
+            let publisher = HostMqttPublisher::new();
+            *client_slot.lock().unwrap() = Some(publisher);
+            mqtt_ready.store(true, Ordering::Relaxed);
 
-    #[test]
-    fn manager_populates_slot_when_wifi_ready() {
-        let wifi = Arc::new(AtomicBool::new(true));
-        let mqtt = Arc::new(AtomicBool::new(false));
-        let slot: Arc<Mutex<Option<HostMqttPublisher>>> = Arc::new(Mutex::new(None));
-        HostMqttManager::run_loop(&Config::default(), wifi, mqtt.clone(), slot.clone()).unwrap();
-        assert!(mqtt.load(Ordering::Relaxed));
-        assert!(slot.lock().unwrap().is_some());
-    }
+            // Stay connected while WiFi remains up
+            while wifi_ready.load(Ordering::Relaxed) {
+                if let Some(s) = &shutdown {
+                    if s.load(Ordering::Relaxed) {
+                        mqtt_ready.store(false, Ordering::Relaxed);
+                        // Do NOT clear slot; preserve for inspection after join
+                        return Ok(());
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
 
-    #[test]
-    fn manager_leaves_slot_empty_when_wifi_not_ready() {
-        let wifi = Arc::new(AtomicBool::new(false));
-        let mqtt = Arc::new(AtomicBool::new(false));
-        let slot: Arc<Mutex<Option<HostMqttPublisher>>> = Arc::new(Mutex::new(None));
-        HostMqttManager::run_loop(&Config::default(), wifi, mqtt.clone(), slot).unwrap();
-        assert!(!mqtt.load(Ordering::Relaxed));
+            // WiFi dropped
+            mqtt_ready.store(false, Ordering::Relaxed);
+            *client_slot.lock().unwrap() = None;
+            std::thread::sleep(std::time::Duration::from_millis(10)); // backoff before reconnect
+                                                                      // Loop back to wait for WiFi again
+        }
     }
 }

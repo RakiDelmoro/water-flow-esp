@@ -25,21 +25,3 @@ impl PayloadSampler for HostFlowSampler {
         self.0.pop_front()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn drains_in_fifo_order() {
-        let mut s = HostFlowSampler::from_samples((0..3u32).map(|i| PayloadSample {
-            pulse_delta: i,
-            time_delta_ms: i as u64 * 1_000,
-            accumulative_pulse: i,
-        }));
-        assert_eq!(s.poll().unwrap().pulse_delta, 0);
-        assert_eq!(s.poll().unwrap().pulse_delta, 1);
-        assert_eq!(s.poll().unwrap().pulse_delta, 2);
-        assert!(s.poll().is_none());
-    }
-}

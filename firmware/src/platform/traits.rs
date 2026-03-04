@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 pub trait Clock {
     // Returns the current time in milliseconds since boot.
@@ -33,7 +33,12 @@ pub trait WifiManager<M> {
 
     /// Blocking loop: connect, monitor, reconnect on drop.
     /// Writes `true` into `connected` when the link is up.
-    fn run_loop(self, connected: Arc<std::sync::atomic::AtomicBool>) -> anyhow::Result<()>;
+    /// If `shutdown` is Some, loops until the flag is set.
+    fn run_loop(
+        self,
+        connected: Arc<AtomicBool>,
+        shutdown: Option<Arc<AtomicBool>>,
+    ) -> anyhow::Result<()>;
 
     /// Synchronous snapshot: is the interface currently associated?
     fn is_connected(&self) -> bool;
@@ -45,11 +50,13 @@ pub trait MqttManager {
     /// Blocking loop: wait for WiFi, connect to broker, maintain session.
     /// Populates `client_slot` once a session is established;
     /// clears it on disconnect.
+    /// If `shutdown` is Some, exits gracefully when the flag is set.
     fn run_loop(
         config: &crate::config::Config,
-        wifi_ready: Arc<std::sync::atomic::AtomicBool>,
-        mqtt_ready: Arc<std::sync::atomic::AtomicBool>,
+        wifi_ready: Arc<AtomicBool>,
+        mqtt_ready: Arc<AtomicBool>,
         client_slot: Arc<Mutex<Option<Self::Client>>>,
+        shutdown: Option<Arc<AtomicBool>>,
     ) -> anyhow::Result<()>;
 }
 

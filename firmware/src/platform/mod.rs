@@ -1,3 +1,4 @@
+pub mod sink;
 pub mod traits;
 
 #[cfg(target_os = "espidf")]

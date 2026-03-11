@@ -1,79 +1,125 @@
-//! Water Flow Sensor - Event-Driven Architecture
-//!
-//! Self-powered device: no busy-waiting, efficient power usage.
-//! Uses hardware timer + channels for event-driven sampling.
-
-mod app;
 mod main_config;
 mod mqtt_manager;
-mod sensor;
-mod timer;
 mod wifi_manager;
 
+use esp_idf_hal::delay::FreeRtos;
+use esp_idf_hal::gpio::{InterruptType, PinDriver, Pull};
 use esp_idf_hal::peripherals::Peripherals;
-use log::{info, warn};
-use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc, Mutex};
-use crate::sensor::setup_flow_sensor;
-use crate::timer::SampleTimer;
+use esp_idf_svc::mqtt::client::{EspMqttClient, QoS};
+use log::info;
+use main_config::MQTT_TOPIC;
+use serde_json::json;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
-/// Events for event-driven main loop
-#[derive(Debug, Clone, Copy)]
-pub enum AppEvent {
-    TimerTick,       // 1-second timer fired
-    WifiState(bool), // WiFi connected/disconnected
-    MqttState(bool), // MQTT connected/disconnected
+// `static` creates a single global value with a fixed memory address.
+// Unlike `const`, it is not inlined and can be mutated (here safely via `AtomicU32`).
+static PULSE_COUNT: AtomicU32 = AtomicU32::new(0);
+
+fn time_now_in_millis() -> u64 {
+    unsafe { (esp_idf_svc::sys::esp_timer_get_time() / 1000) as u64 }
 }
 
 fn main() -> anyhow::Result<()> {
-    // Initialize ESP-IDF
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    info!(target: "init", "=== Water Flow Sensor Starting ===");
+    info!("=== DEVICE POWERED ON - Starting initialization ===");
+    info!("Device is powered by water flow - will run until water stops");
 
-    // Setup
     let peripherals = Peripherals::take().expect("Failed to take peripherals");
-    let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
-    let event_tx = Arc::new(Mutex::new(event_tx));
 
-    // Shared state
+    // Wrap in Arc so they can be shared across threads
     let wifi_connected = Arc::new(AtomicBool::new(false));
     let mqtt_connected = Arc::new(AtomicBool::new(false));
-    let mqtt_client: Arc<Mutex<Option<esp_idf_svc::mqtt::client::EspMqttClient<'static>>>> =
-        Arc::new(Mutex::new(None));
+    let mqtt_client: Arc<Mutex<Option<EspMqttClient<'static>>>> = Arc::new(Mutex::new(None));
 
-    // Sensor
-    let mut flow_pin = setup_flow_sensor(peripherals.pins.gpio25)?;
+    // Clone Arc references for the threads BEFORE moving them
+    let wifi_connected_for_mqtt = Arc::clone(&wifi_connected);
+    let wifi_connected_clone = Arc::clone(&wifi_connected);
+    let mqtt_connected_clone = Arc::clone(&mqtt_connected);
+    let mqtt_client_clone = Arc::clone(&mqtt_client);
 
-    // WiFi thread
+    // Setup flow sensor - starts counting pulses immediately
+    let mut flow_pin = PinDriver::input(peripherals.pins.gpio25)?;
+    flow_pin.set_pull(Pull::Up)?;
+    flow_pin.set_interrupt_type(InterruptType::AnyEdge)?;
+    unsafe {
+        flow_pin.subscribe(|| {
+            PULSE_COUNT.fetch_add(1, Ordering::Relaxed);
+        })?;
+    }
+    info!("Flow sensor reading started on GPIO 25 - counting pulses immediately");
+
+    // Initialize WiFi - runs independently with reconnection
     let wifi = wifi_manager::setup_wifi(peripherals.modem)?;
-    let _wifi_thread = std::thread::Builder::new().stack_size(4096).spawn({
-        let tx = Arc::clone(&event_tx);
-        let wifi_conn = Arc::clone(&wifi_connected);
-        move || {
-            if let Err(e) = wifi_manager::run_wifi_loop(wifi, wifi_conn, tx) {
-                warn!(target: "wifi", "Error: {:?}", e);
+    let _wifi_thread = std::thread::Builder::new()
+        .stack_size(8192)
+        .spawn(move || {
+            if let Err(e) = wifi_manager::run_wifi_loop(wifi, wifi_connected_clone) {
+                info!("WiFi thread error: {:?}", e);
+            }
+        })?;
+
+    // Initialize MQTT - runs independently but waits for WiFi
+    let _mqtt_thread = std::thread::Builder::new()
+        .stack_size(8192)
+        .spawn(move || {
+            if let Err(e) = mqtt_manager::run_mqtt_loop(
+                wifi_connected_for_mqtt,
+                mqtt_connected_clone,
+                mqtt_client_clone,
+            ) {
+                info!("MQTT thread error: {:?}", e);
+            }
+        })?;
+
+    info!("=== Initialization complete - entering main loop ===");
+    info!("Sensor reading continues regardless of WiFi/MQTT state");
+
+    let mut last_sample_time = time_now_in_millis();
+    let mut last_pulse_count: u32 = PULSE_COUNT.load(Ordering::Relaxed);
+    loop {
+        flow_pin.enable_interrupt()?; // Start accumulate
+        if time_now_in_millis() - last_sample_time < 1_000 {
+            FreeRtos::delay_ms(10); // Prevent busy loop and watchdog timeout
+            continue;
+        } // Skip to the next iteration of a loop
+
+        let now = time_now_in_millis();
+        let pulses = PULSE_COUNT.load(Ordering::Relaxed);
+
+        if !wifi_connected.load(Ordering::Relaxed) || !mqtt_connected.load(Ordering::Relaxed) {
+            FreeRtos::delay_ms(100); // Wait before checking connection status again
+            continue;
+        }
+
+        // Try to publish using MQTT client from shared state
+        if let Ok(mut client_guard) = mqtt_client.try_lock() {
+            if let Some(ref mut client) = client_guard.as_mut() {
+                // Double-check MQTT is still connected after acquiring lock
+                if !mqtt_connected.load(Ordering::Relaxed) {
+                    continue; // Skip this sample, will try again next loop
+                }
+                let time_delta = now - last_sample_time;
+                let pulse_delta = pulses.saturating_sub(last_pulse_count);
+                let payload = json!({"total_pulses": pulse_delta, "Time_ms": time_delta, "accumulative_pulses": last_pulse_count});
+
+                match client.publish(
+                    MQTT_TOPIC,
+                    QoS::AtLeastOnce,
+                    false,
+                    payload.to_string().as_bytes(),
+                ) {
+                    Ok(_) => {
+                        last_pulse_count += pulse_delta;
+                        last_sample_time += time_delta;
+                    }
+                    Err(e) => {
+                        info!("Failed to publish data: {:?}", e);
+                    }
+                }
             }
         }
-    })?;
-
-    // MQTT thread
-    let _mqtt_thread = std::thread::Builder::new().stack_size(4096).spawn({
-        let tx = Arc::clone(&event_tx);
-        let mqtt_conn = Arc::clone(&mqtt_connected);
-        let client = Arc::clone(&mqtt_client);
-        move || {
-            if let Err(e) = mqtt_manager::run_mqtt_loop(mqtt_conn, client, tx) {
-                warn!(target: "mqtt", "Error: {:?}", e);
-            }
-        }
-    })?;
-
-    // Timer
-    let _timer = SampleTimer::new(event_tx)?;
-
-    // Run event loop
-    info!(target: "init", "=== Entering event loop ===");
-    app::run_event_loop(&event_rx, &mut flow_pin, &wifi_connected, &mqtt_connected, &mqtt_client)
+    }
 }

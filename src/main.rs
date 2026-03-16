@@ -1,6 +1,5 @@
+mod connection_manager;
 mod main_config;
-mod mqtt_manager;
-mod wifi_manager;
 
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::gpio::{InterruptType, PinDriver, Pull};
@@ -34,8 +33,7 @@ fn main() -> anyhow::Result<()> {
     let mqtt_connected = Arc::new(AtomicBool::new(false));
     let mqtt_client: Arc<Mutex<Option<EspMqttClient<'static>>>> = Arc::new(Mutex::new(None));
 
-    // Clone Arc references for the threads BEFORE moving them
-    let wifi_connected_for_mqtt = Arc::clone(&wifi_connected);
+    // Clone Arc references for the connection thread
     let wifi_connected_clone = Arc::clone(&wifi_connected);
     let mqtt_connected_clone = Arc::clone(&mqtt_connected);
     let mqtt_client_clone = Arc::clone(&mqtt_client);
@@ -51,26 +49,17 @@ fn main() -> anyhow::Result<()> {
     }
     info!("Flow sensor reading started on GPIO 25 - counting pulses immediately");
 
-    // Initialize WiFi - runs independently with reconnection
-    let wifi = wifi_manager::setup_wifi(peripherals.modem)?;
-    let _wifi_thread = std::thread::Builder::new()
+    // Spawn single connection management thread (WiFi + MQTT)
+    let _connection_thread = std::thread::Builder::new()
         .stack_size(8192)
         .spawn(move || {
-            if let Err(e) = wifi_manager::run_wifi_loop(wifi, wifi_connected_clone) {
-                info!("WiFi thread error: {:?}", e);
-            }
-        })?;
-
-    // Initialize MQTT - runs independently but waits for WiFi
-    let _mqtt_thread = std::thread::Builder::new()
-        .stack_size(8192)
-        .spawn(move || {
-            if let Err(e) = mqtt_manager::run_mqtt_loop(
-                wifi_connected_for_mqtt,
+            if let Err(e) = connection_manager::run_connection_loop(
+                peripherals.modem,
+                wifi_connected_clone,
                 mqtt_connected_clone,
                 mqtt_client_clone,
             ) {
-                info!("MQTT thread error: {:?}", e);
+                info!("Connection thread error: {:?}", e);
             }
         })?;
 
@@ -84,22 +73,20 @@ fn main() -> anyhow::Result<()> {
         if time_now_in_millis() - last_sample_time < 1_000 {
             FreeRtos::delay_ms(10); // Prevent busy loop and watchdog timeout
             continue;
-        } // Skip to the next iteration of a loop
+        }
 
         let now = time_now_in_millis();
         let pulses = PULSE_COUNT.load(Ordering::Relaxed);
 
         if !wifi_connected.load(Ordering::Relaxed) || !mqtt_connected.load(Ordering::Relaxed) {
-            FreeRtos::delay_ms(100); // Wait before checking connection status again
+            FreeRtos::delay_ms(100);
             continue;
         }
 
-        // Try to publish using MQTT client from shared state
         if let Ok(mut client_guard) = mqtt_client.try_lock() {
             if let Some(ref mut client) = client_guard.as_mut() {
-                // Double-check MQTT is still connected after acquiring lock
                 if !mqtt_connected.load(Ordering::Relaxed) {
-                    continue; // Skip this sample, will try again next loop
+                    continue;
                 }
                 let time_delta = now - last_sample_time;
                 let pulse_delta = pulses.saturating_sub(last_pulse_count);

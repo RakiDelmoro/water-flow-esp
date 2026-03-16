@@ -1,0 +1,31 @@
+# Build artifacts
+.embuild/
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (add your own config files here)
+# config.toml
+# secrets/
+
+# Logs
+*.log
+
+# Flash artifacts
+*.bin
+*.elf
+*.map
+
+# Backup files
+*.bak
+*.orig

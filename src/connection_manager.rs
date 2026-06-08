@@ -96,6 +96,7 @@ pub fn run_connection_loop(
     modem: Modem,
     wifi_connected: Arc<AtomicBool>,
     mqtt_connected: Arc<AtomicBool>,
+    mqtt_first_connect: Arc<AtomicBool>,
     mqtt_client: Arc<Mutex<Option<EspMqttClient<'static>>>>,
 ) -> Result<()> {
     let mut wifi = setup_wifi(modem)?;
@@ -145,17 +146,23 @@ pub fn run_connection_loop(
         // --- WiFi UP ---
         if !wifi_connected.load(Ordering::Relaxed) {
             info!("WiFi connected!");
-            // Log the configured static IP for diagnostics
-            info!(
-                "ESP32 static IP configuration: {}.{}.{}.{}",
-                STATIC_IP[0], STATIC_IP[1], STATIC_IP[2], STATIC_IP[3]
-            );
+            // Log the actual IP address assigned to the STA interface
+            match wifi.sta_netif().get_ip_info() {
+                Ok(ip_info) => {
+                    info!(
+                        "ESP32 IP address: {}.{}.{}.{}",
+                        ip_info.ip.octets()[0],
+                        ip_info.ip.octets()[1],
+                        ip_info.ip.octets()[2],
+                        ip_info.ip.octets()[3]
+                    );
+                }
+                Err(_) => {
+                    info!("ESP32 IP address: not yet assigned (DHCP in progress?)");
+                }
+            }
             wifi_connected.store(true, Ordering::Relaxed);
         }
-
-        // Network stabilization delay - give TCP/IP stack time to be fully ready
-        // For water-powered devices, this wait is critical for reliable MQTT connection
-        thread::sleep(Duration::from_secs(5));
 
         // --- MQTT MANAGEMENT ---
         if !mqtt_connected.load(Ordering::Relaxed) {
@@ -215,6 +222,9 @@ pub fn run_connection_loop(
                         *guard = Some(client);
                     }
                     mqtt_connected.store(true, Ordering::Relaxed);
+                    // Signal main loop: first MQTT connect happened
+                    // (flag stays true until main loop publishes boot data and clears it)
+                    mqtt_first_connect.store(true, Ordering::Relaxed);
                     info!("MQTT connected and client ready for publishing!");
 
                     // --- MQTT MONITORING LOOP (blocks until disconnect) ---
@@ -237,6 +247,9 @@ pub fn run_connection_loop(
                     // Cleanup after disconnect
                     info!("MQTT disconnected - will reconnect when ready");
                     mqtt_connected.store(false, Ordering::Relaxed);
+                    // Next reconnect will be treated as first-connect
+                    // so main loop publishes accumulated data immediately
+                    mqtt_first_connect.store(true, Ordering::Relaxed);
                     let mut guard = mqtt_client
                         .lock()
                         .map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
